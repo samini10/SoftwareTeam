@@ -1,0 +1,205 @@
+# =============================================================================
+# API Keys and Secrets (CRITICAL - Never commit these!)
+# =============================================================================
+
+# Generic API key files
+*.key
+*.secret
+*.token
+.api_key
+.llm_key
+api_key.txt
+secrets.txt
+
+# Environment files with secrets
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Provider-specific token files
+.github_token
+.anthropic_key
+.openai_key
+.azure_key
+.google_key
+
+# =============================================================================
+# Build Artifacts
+# =============================================================================
+
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Linker files
+*.ilk
+
+# Debugger Files
+*.pdb
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Debug information files
+*.dwo
+
+# Build directories
+build/
+**/build/
+**/dist/
+**/out/
+
+# =============================================================================
+# Project Structure
+# =============================================================================
+
+# Module build outputs (each module has release/ and debug/ folders)
+modules/*/release/
+modules/*/debug/
+!modules/*/release/.gitkeep
+!modules/*/debug/.gitkeep
+
+# Combined output directory (aggregates all module builds)
+output/release/*
+output/debug/*
+!output/release/.gitkeep
+!output/debug/.gitkeep
+
+# Generated code directories
+**/gen-cpp/
+**/gen-java/
+**/gen-py/
+**/generated/
+
+# =============================================================================
+# Language-Specific
+# =============================================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+package-lock.json
+
+# Java
+*.class
+*.jar
+*.war
+target/
+
+# Rust
+/target/
+Cargo.lock
+
+# Go
+/vendor/
+go.sum
+
+# =============================================================================
+# IDE and Editor
+# =============================================================================
+
+# VS Code (ignore all except settings.json which configures Copilot)
+.vscode/*
+!.vscode/settings.json
+*.code-workspace
+
+# JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+
+# =============================================================================
+# OS Files
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+.directory
+
+# =============================================================================
+# Temporary and Cache Files
+# =============================================================================
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+.cache/
+
+# Coverage reports
+coverage/
+.coverage
+htmlcov/
+*.lcov
+
+# Test outputs
+test-results/
+.pytest_cache/
+pr_details.json

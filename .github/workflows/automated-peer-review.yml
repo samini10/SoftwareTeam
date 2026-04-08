@@ -1,0 +1,522 @@
+name: Automated Multi-Agent Peer Review
+
+# This workflow implements automated sequential peer review using LLM APIs.
+#
+# TRIGGERS:
+# - Automatically when a PR is opened/updated targeting any master_* branch
+# - Manually via "Run workflow" by entering a PR number
+#
+# Flow:
+# 1. PR opened/updated on a master_* branch → workflow triggers automatically
+# 2. Agents review sequentially based on PR author
+# 3. Reviews posted with inline comments
+# 4. If 2+ approvals → Mark PR as peer-review:approved
+#
+# Requirements:
+# - LLM_API_KEY secret must be configured in repository
+# - Supports: Anthropic, OpenAI, or other providers (configure in .llm/config.json)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - 'master_*'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: number
+
+permissions:
+  pull-requests: write
+  issues: write
+  contents: write
+
+jobs:
+  sequential-peer-review:
+    name: Sequential Multi-Agent Review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Install dependencies
+        run: |
+          cd .github/scripts
+          npm install
+
+      - name: Determine Reviewers
+        id: reviewers
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ inputs.pr_number || github.event.pull_request.number }};
+
+            // Get PR details
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            const branchName = pr.data.head.ref;
+
+            // Detect if this is a rework run (latest commit is a rework commit).
+            // NOTE: listCommits returns oldest-first, so we must fetch all commits
+            // and check the LAST one — using per_page:1 would give the oldest commit.
+            const commits = await github.rest.pulls.listCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100
+            });
+            const latestCommit = commits.data[commits.data.length - 1];
+            const latestMsg = latestCommit?.commit?.message || '';
+            const isRework = latestMsg.startsWith('[rework]');
+            if (isRework) {
+              console.log('Latest commit is a rework commit — running rework review (forced approve mode).');
+            }
+            core.setOutput('is_rework', isRework ? 'true' : 'false');
+
+            // Generic pattern: {llm-agent-name}/{agent-type}-{project}-{sessionID}
+            // Examples: copilot/developer-sudoku-webapp-123, claude/architect-app-456, gemini/tester-web-789
+            // Agent types are known: developer, architect, tester, it, product-owner
+            // Project name can contain hyphens, sessionID can be any string
+            const branchPattern = /^([a-z-]+)\/(developer|architect|tester|it|product-owner)-(.+)-(.+)$/;
+            const match = branchName.match(branchPattern);
+
+            if (!match) {
+              console.log(`Branch "${branchName}" does not match expected pattern. Expected: {llm-name}/{agent-type}-{project}-{sessionID}`);
+              console.log(`Valid agent types: developer, architect, tester, it, product-owner`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            const llmAgentName = match[1];  // e.g., "copilot", "claude", "gemini"
+            const agentType = match[2];     // e.g., "developer", "architect", "tester"
+            const projectName = match[3];   // e.g., "sudoku-webapp", "app"
+            const sessionId = match[4];     // e.g., "1769889815", "abc123", "pbCFa"
+            
+            console.log(`LLM Agent: ${llmAgentName}, Agent Type: ${agentType}, Project: ${projectName}, Session: ${sessionId}`);
+
+            // Define review assignment rules (reduced reviewers to save costs)
+            const reviewRules = {
+              'developer': ['architect', 'tester'],           // 2 reviewers
+              'architect': ['developer', 'tester'],           // 2 reviewers
+              'tester': ['developer', 'product-owner'],       // 2 reviewers
+              'it': ['architect'],                            // 1 reviewer
+              'product-owner': ['architect']                  // 1 reviewer
+            };
+
+            const reviewers = reviewRules[agentType] || [];
+            console.log(`Agent: ${agentType}, Reviewers: ${reviewers.join(', ')}`);
+
+            core.setOutput('agent_type', agentType);
+            core.setOutput('reviewers', JSON.stringify(reviewers));
+            core.setOutput('skip', 'false');
+            core.setOutput('pr_number', prNumber);
+            core.setOutput('pr_head_ref', branchName);
+            core.setOutput('is_rework', isRework ? 'true' : 'false');
+
+      - name: Get PR Details
+        id: pr_details
+        if: steps.reviewers.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ inputs.pr_number || github.event.pull_request.number }};
+
+            // Get PR diff
+            const diff = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              mediaType: {
+                format: 'diff'
+              }
+            });
+
+            // Get changed files
+            const files = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            // Get PR info
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            // Store PR details
+            const prDetails = {
+              number: prNumber,
+              title: pr.data.title,
+              body: pr.data.body || '',
+              diff: diff.data,
+              files: files.data.map(f => ({
+                filename: f.filename,
+                status: f.status,
+                additions: f.additions,
+                deletions: f.deletions,
+                changes: f.changes,
+                patch: f.patch || ''
+              }))
+            };
+
+            // Write to file for next step
+            const fs = require('fs');
+            fs.writeFileSync('pr_details.json', JSON.stringify(prDetails, null, 2));
+
+            return prDetails;
+
+      - name: Run Sequential Agent Reviews
+        id: run_reviews
+        if: steps.reviewers.outputs.skip != 'true'
+        env:
+          LLM_PROVIDER: ${{ secrets.LLM_PROVIDER || 'openai' }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Parse reviewers list
+          REVIEWERS='${{ steps.reviewers.outputs.reviewers }}'
+          echo "Reviewers to run: $REVIEWERS"
+          
+          # Convert JSON array to bash array
+          REVIEWER_LIST=$(echo $REVIEWERS | jq -r '.[]')
+          
+          # Loop through each reviewer agent
+          for agent in $REVIEWER_LIST; do
+            echo "================================================"
+            echo "Running review as: $agent"
+            echo "================================================"
+            
+            REWORK_FLAG=''
+            if [ '${{ steps.reviewers.outputs.is_rework }}' = 'true' ]; then
+              REWORK_FLAG='--rework true'
+            fi
+
+            node .github/scripts/automated-review.js \
+              --agent "$agent" \
+              --pr-number "${{ inputs.pr_number || github.event.pull_request.number }}" \
+              --repo "${{ github.repository }}" \
+              --pr-details-file "pr_details.json" \
+              $REWORK_FLAG
+            
+            review_exit_code=$?
+            
+            if [ $review_exit_code -ne 0 ]; then
+              echo "⚠️  Review by $agent encountered an error (exit code: $review_exit_code)"
+            else
+              echo "✅ Review by $agent completed successfully"
+            fi
+            
+            echo ""
+          done
+          
+          echo "All reviews completed!"
+
+      - name: Check Approval Status
+        id: approval_status
+        if: steps.reviewers.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ inputs.pr_number || github.event.pull_request.number }};
+
+            // Fetch both PR reviews (primary path: pulls.createReview) and
+            // issue comments (fallback path: issues.createComment when review API fails).
+            const [reviewsResp, commentsResp] = await Promise.all([
+              github.rest.pulls.listReviews({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                per_page: 100
+              }),
+              github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                per_page: 100
+              })
+            ]);
+
+            // For each agent, only count their LATEST review decision.
+            // This ensures that after a rework, a previous "CHANGES REQUESTED"
+            // from that agent is replaced by their new "APPROVED".
+            const agentReviewPattern = /\*\*(.+?) Agent Review\*\*/;
+
+            // Map: agentName -> latest decision ('approved' | 'changes_requested')
+            const latestDecision = {};
+
+            // Process PR reviews (sorted oldest-first so newer overwrites older).
+            const sortedReviews = [...reviewsResp.data].sort(
+              (a, b) => new Date(a.submitted_at) - new Date(b.submitted_at)
+            );
+            for (const review of sortedReviews) {
+              const body = review.body || '';
+              const match = body.match(agentReviewPattern);
+              if (!match) continue;
+              const agentName = match[1].toLowerCase(); // e.g. "architect", "tester"
+              if (review.state === 'APPROVED') {
+                latestDecision[agentName] = 'approved';
+              } else if (review.state === 'CHANGES_REQUESTED') {
+                latestDecision[agentName] = 'changes_requested';
+              }
+            }
+
+            // Also check issue comments for the fallback path (when createReview failed).
+            // commentsResp.data is oldest-first; later entries overwrite earlier.
+            for (const comment of commentsResp.data) {
+              const body = comment.body || '';
+              const match = body.match(agentReviewPattern);
+              if (!match) continue;
+              const agentName = match[1].toLowerCase();
+              if (/✅\s+\*{0,2}APPROVED\*{0,2}/.test(body)) {
+                latestDecision[agentName] = 'approved';
+              } else if (/🔴\s+\*{0,2}CHANGES REQUESTED\*{0,2}/.test(body)) {
+                latestDecision[agentName] = 'changes_requested';
+              }
+            }
+
+            const decisions = Object.values(latestDecision);
+            let approvals = decisions.filter(d => d === 'approved').length;
+            let changesRequested = decisions.filter(d => d === 'changes_requested').length;
+
+            console.log(`Latest decisions per agent: ${JSON.stringify(latestDecision)}`);
+            console.log(`Approvals: ${approvals}, Changes Requested: ${changesRequested}`);
+
+            // Get number of reviewers assigned to determine required approvals
+            const agentType = '${{ steps.reviewers.outputs.agent_type }}';
+            const reviewers = JSON.parse('${{ steps.reviewers.outputs.reviewers }}');
+            const requiredApprovals = reviewers.length; // All reviewers must approve
+
+            console.log(`Required approvals: ${requiredApprovals} (all ${reviewers.length} reviewers)`);
+
+            if (approvals >= requiredApprovals && changesRequested === 0) {
+              // Mark as peer-review approved
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: ['peer-review:approved', 'ready-for-user-review']
+              });
+
+              // Remove awaiting-review labels
+              const currentLabels = await github.rest.issues.listLabelsOnIssue({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber
+              });
+
+              for (const label of currentLabels.data) {
+                if (label.name.startsWith('awaiting-')) {
+                  await github.rest.issues.removeLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    name: label.name
+                  }).catch(() => {}); // Ignore errors
+                }
+              }
+
+              // Post approval summary comment
+              const reviewersList = reviewers.map(r => r.charAt(0).toUpperCase() + r.slice(1)).join(', ');
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `## ✅ Peer Review Approved\n\n**${approvals}/${requiredApprovals}** required approvals obtained!\n\n✨ This PR has passed all peer reviews and is **ready for user review and merge**.\n\n**Reviewers:** ${reviewersList}\n\n---\n*Automated peer review by multi-agent system*`
+              });
+
+              console.log('✅ PR approved by peers!');
+
+              // Ask the user whether to merge.
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `## 🤖 Agent Query: Merge This PR?\n\nAll **${approvals}/${requiredApprovals}** required peer reviews have **approved** this PR.\n\n**Reviewers:** ${reviewersList}\n\n👉 Reply \`/merge\` in this PR to merge it, or close the PR to discard.\n\n---\n*Automated peer review by multi-agent system*`
+              });
+
+              console.log('💬 Asked user for merge confirmation via /merge comment.');
+
+            } else if (changesRequested > 0) {
+              // Mark as changes requested
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: ['peer-review:changes-requested']
+              });
+
+              // Inform the user that the author agent will now work on the feedback.
+              const reviewersList = reviewers.map(r => r.charAt(0).toUpperCase() + r.slice(1)).join(', ');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `## 🔄 Author Agent Rework Starting\n\n**${changesRequested}** reviewer(s) requested changes (${reviewersList}).\n\nThe author agent is now addressing the review feedback and will push a rework commit shortly. No further review will be triggered after the rework.\n\n---\n*Automated peer review by multi-agent system*`
+              });
+
+              core.setOutput('changes_requested', 'true');
+              console.log('🔴 Changes requested by reviewers — author rework queued.');
+
+            } else {
+              console.log(`⏳ Waiting for approvals: ${approvals}/${requiredApprovals}`);
+            }
+
+            return {
+              approvals,
+              changesRequested,
+              approved: approvals >= requiredApprovals && changesRequested === 0
+            };
+
+      - name: Author Rework
+        id: author_rework
+        if: steps.approval_status.outputs.changes_requested == 'true' && steps.reviewers.outputs.is_rework != 'true'
+        env:
+          LLM_PROVIDER: ${{ secrets.LLM_PROVIDER || 'openai' }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ADMIN_PAT: ${{ secrets.ADMIN_PAT }}
+        run: |
+          PR_HEAD_REF='${{ steps.reviewers.outputs.pr_head_ref }}'
+          AGENT_TYPE='${{ steps.reviewers.outputs.agent_type }}'
+          PR_NUMBER='${{ inputs.pr_number || github.event.pull_request.number }}'
+
+          echo "Switching to PR branch: $PR_HEAD_REF"
+          git fetch origin "$PR_HEAD_REF"
+          git checkout "$PR_HEAD_REF"
+
+          echo "Running author revision as: $AGENT_TYPE"
+          node .github/scripts/author-revision.js \
+            --agent "$AGENT_TYPE" \
+            --pr-number "$PR_NUMBER" \
+            --repo "${{ github.repository }}" \
+            --pr-details-file "pr_details.json"
+
+          # If any tracked files changed, commit and push.
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Remove temp file so git add -A never encounters it
+          rm -f pr_details.json
+
+          if git diff --quiet && git diff --cached --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+            echo "No file changes produced by author revision."
+          else
+            git add -A
+            git commit -m "[rework] Address peer review feedback"
+
+            # Strategy 1: Direct push using ADMIN_PAT (repo admin bypass in ruleset).
+            # Requires ADMIN_PAT secret to be set and the token owner to be a repo admin.
+            if [ -n "$ADMIN_PAT" ]; then
+              git remote set-url origin "https://x-access-token:${ADMIN_PAT}@github.com/${{ github.repository }}"
+              if git push origin "HEAD:$PR_HEAD_REF"; then
+                echo "✅ Rework commit pushed directly to $PR_HEAD_REF via ADMIN_PAT."
+              else
+                echo "⚠️  Direct push failed. Falling back to temp branch approach."
+                REWORK_BRANCH="copilot/rework-${PR_NUMBER}-$(date +%s)"
+                git push origin "HEAD:$REWORK_BRANCH"
+                curl -s -X POST \
+                  -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/${{ github.repository }}/merges" \
+                  -d "{\"base\":\"$PR_HEAD_REF\",\"head\":\"$REWORK_BRANCH\",\"commit_message\":\"[rework] Address peer review feedback\"}"
+                git push origin --delete "$REWORK_BRANCH" || true
+                echo "✅ Rework commit merged into $PR_HEAD_REF via temp branch."
+              fi
+            else
+              # Strategy 2 (no ADMIN_PAT): temp branch + GitHub API merge.
+              # Uses copilot/* prefix to avoid rework/auto-* branch ruleset violations.
+              echo "⚠️  ADMIN_PAT not set. Set it as a repository secret for direct push. Trying temp branch fallback..."
+              REWORK_BRANCH="copilot/rework-${PR_NUMBER}-$(date +%s)"
+              git push origin "HEAD:$REWORK_BRANCH"
+              curl -s -X POST \
+                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/merges" \
+                -d "{\"base\":\"$PR_HEAD_REF\",\"head\":\"$REWORK_BRANCH\",\"commit_message\":\"[rework] Address peer review feedback\"}"
+              git push origin --delete "$REWORK_BRANCH" || true
+              echo "✅ Rework commit merged into $PR_HEAD_REF."
+            fi
+          fi
+
+      - name: Notify Rework Complete and Trigger Re-Review
+        if: steps.author_rework.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ADMIN_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = ${{ inputs.pr_number || github.event.pull_request.number }};
+            const agentType = '${{ steps.reviewers.outputs.agent_type }}';
+            const agentLabel = agentType.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `## ✏️ Author Rework Complete\n\n**${agentLabel} Agent** has addressed the reviewer feedback and pushed a \`[rework]\` commit.\n\n⏳ Triggering re-review now — reviewers will be forced to approve.\n\n---\n*Automated peer review by multi-agent system*`
+            });
+
+            // Explicitly trigger a new re-review run via workflow_dispatch.
+            // We cannot rely on the rework push to fire a pull_request:synchronize
+            // event because GitHub suppresses Actions-initiated push triggers
+            // during an active workflow run.
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            const baseBranch = pr.data.base.ref;
+
+            const workflowsResp = await github.rest.actions.listRepoWorkflows({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const thisWorkflow = workflowsResp.data.workflows.find(
+              w => w.path === '.github/workflows/automated-peer-review.yml'
+            );
+
+            if (!thisWorkflow) {
+              console.log('⚠️  Could not find workflow ID — re-review must be triggered manually.');
+            } else {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: thisWorkflow.id,
+                ref: baseBranch,
+                inputs: { pr_number: String(prNumber) }
+              });
+              console.log(`✅ Re-review triggered for PR #${prNumber} (base: ${baseBranch}).`);
+            }
+
+      - name: Summary
+        if: steps.reviewers.outputs.skip != 'true'
+        run: |
+          echo "## 🤖 Automated Peer Review Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Sequential reviews completed by:" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.reviewers.outputs.reviewers }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check PR comments for detailed review feedback from each agent." >> $GITHUB_STEP_SUMMARY

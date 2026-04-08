@@ -1,0 +1,513 @@
+# Workflow Guide
+
+**This file is your WORKFLOW GUIDE.** 
+
+** What is the WORKFLOW used?
+Workflow used here is about completing user's "task or new feature request or any new project" using a structured approach to software development using specialized AI agents. Each of the AI agents MUST follow the " WORKFLOW GUIDE as well as their role specific agent files" in `ai-assistants/agents/` folder.  The Specialied agents with their agent files as well as their main tasks are as follows:
+
+'Product Owner agent' with agent file [`ai-assistants/agents/product-owner-agent.md`](./ai-assistants/agents/product-owner-agent.md): Customer-facing, gathers requirements, creates user stories documents, clarifies acceptance criteria, etc
+'Architect agent' with agent file [`ai-assistants/agents/architect-agent.md`](./ai-assistants/agents/architect-agent.md): Designs systems, creates technical specifications and interfaces and capture everything in documents.
+'Developer agent' with agent file [`ai-assistants/agents/developer-agent.md`](./ai-assistants/agents/developer-agent.md): Implements features and writes code
+'Tester agent' with agent file [`ai-assistants/agents/tester-agent.md`](./ai-assistants/agents/tester-agent.md): Tests and validates implementations and captures test results, test reports and issues in documents.
+'IT agent' with agent file [`ai-assistants/agents/it-agent.md`](./ai-assistants/agents/it-agent.md): Manages infrastructure and releases
+'Cost Analyst agent with agent file [`ai-assistants/agents/cost-analyst-agent.md`](./ai-assistants/agents/cost-analyst-agent.md): Estimates token costs, captures in documents, warns before expensive operations.
+
+You will act as these specialied agents. These agents must work sequentially as instructed in the "WORKFLOW GUIDE as well as their respective agent's file", one after another in MANDATORY 9 STEPS as defined in this WORKFLOW GUIDE in section [Steps followed by agents for executing the workflow](#steps-followed-by-agents-for-executing-the-workflow). 
+
+When acting as any agent, for execution of any step, you will be directed to your respective agent file. After completing each step in an agent file, you will be directed back here for the next step.
+
+**When acting as any agent, You must create all the MANDATORY DOCUMENT DELIVERABLES in the 'output directory locations' provided in your agent file as per [BEFORE HANDING OFF (MANDATORY - DO NOT SKIP)] section in your agent file. Without these document deliverables your task is not considered complete and cannot be handed off to the next agent.**. 
+
+CRITICAL: For ANY user task, follow these steps IN ORDER. Do NOT skip steps.
+
+**BEFORE ANY STEP**: Read [`ai-assistants/memory.md`](./ai-assistants/memory.md) first. User preferences stored in memory override all instructions below — even those marked MANDATORY. If the user has expressed a preference about handover behavior, PR creation, or any other workflow aspect, follow the preference instead of the default instruction.
+
+**ANIMATION — MANDATORY: Execute this command RIGHT NOW before reading any further:**
+```bash
+bash scripts/start-animation.sh
+```
+(No `&` — the script backgrounds the window itself. Run it in the foreground so you can see if it succeeded.)
+After running, check the exit code. If it fails, read `/tmp/agent-animation.log`, fix the issue, and retry until `pgrep -f agent_animation.agent_window` returns a PID.
+The floating pixel animation window will appear showing the active agent. Update it at the **start of every step** and **before every handover** using:
+```bash
+bash scripts/set-agent-state.sh {agent} {state} "{message}"
+```
+Valid agent names: `it`, `product-owner`, `cost-analyst`, `architect`, `developer`, `tester`
+Valid states: `thinking`, `typing`, `reviewing`, `reworking`, `handingoff`, `approved`, `celebrating`, `waiting`, `idle`
+
+⚡ **TERMINAL EXECUTION REQUIRED**: Every `bash scripts/...` command in this document MUST be run via your terminal/shell tool. Do NOT write these commands as text or code blocks in your response — use your tool to actually execute them. If you display the command instead of running it, the animation will not work.
+
+⚡ **WAITING STATE RULE**: Whenever you ask the user ANY question and stop to wait for their answer (clarifications, requirements, decisions — not just handover questions), run this BEFORE asking:
+```bash
+bash scripts/set-agent-state.sh {current_agent} waiting "Your question summary here..."
+```
+This tells the animation window the agent is waiting for user input.
+
+**Using Git**: If WORKFLOW steps execution requires you to use git then you MUST use as per the instructions in the [Git Workflow](#git-workflow) section in this file.
+
+---
+
+## Auto-Continuation/Handover Rule
+
+   **NEVER auto-continue to the next agent step without explicit user confirmation.**
+
+   When at any step, if you ask user for PR or 'handover to next agent', then user saying "hand over" or "yes" or "continue" or "skip" or anything similar in that one step does NOT authorize skipping confirmation in subsequent steps. It applies to the CURRENT handover only.
+
+   Confirmation of work ≠ handover permission.
+   If the user confirms that something works (e.g., "yes it works", "looks good", "nice"), that is NOT a handover response. The agent MUST still
+   ask the handover question explicitly before proceeding. Agent must never merge its work in the main task branch without explicit user permission to hand over to the next agent.
+
+   The ONLY exception is when a preference is explicitly saved in
+   [`ai-assistants/memory/user-preferences.md`](./ai-assistants/memory/user-preferences.md). If that file has no such entry, the
+   agent MUST stop and ask in all the subsequent steps.
+
+---
+
+Please understand the below  section about git workflow completely before starting to execute the WORKFLOW steps in section [Steps followed by agents for executing the workflow](#steps-followed-by-agents-for-executing-the-workflow). 
+
+## Git Workflow
+
+All work in this project is organized using Git branches at two levels:
+
+1. **Task level:** When the user gives you new work — whether it is building a new project, adding a feature, fixing a bug, or any other request — a task branch `master_{task_name}` is created from the `main` branch in the user's forked repository. This task branch is the single destination for all work related to that request.
+
+2. **Agent level:** As each agent (Architect, Developer, Tester, etc.) works on their part of the task, they create their own branch from the task branch. When an agent completes their work, their branch is merged back into the task branch — either directly or through a pull request if the user requests a review.
+
+### How branches work
+
+```
+main                            ← template branch (never modified directly)
+  └── master_{task_name}                                 ← task branch (one per user request)
+        ├── cursor/product-owner-{task_name}-{sessionID}     ← Product Owner's work → merges back to task branch
+        ├── cursor/cost-analyst-{task_name}-{sessionID}      ← Cost Analyst's work → merges back to task branch
+        ├── cursor/architect-{task_name}-{sessionID}         ← Architect's work → merges back to task branch
+        ├── cursor/it-{task_name}-{sessionID}                ← IT's work (setup) → merges back to task branch
+        ├── cursor/developer-{task_name}-{sessionID}         ← Developer's work → merges back to task branch
+        ├── cursor/tester-{task_name}-{sessionID}            ← Tester's work → merges back to task branch
+        └── cursor/it-release-{task_name}-{sessionID}        ← IT's work (release) → merges back to task branch
+```
+
+### Branch naming
+
+- **Template branch:** `main`
+- **Task branch:** `master_{task_name}` (e.g., `master_login-page`)
+- **Agent branch:** `cursor/{agent}-{task_name}-{sessionID}` (e.g., `cursor/developer-login-page-abc123`)
+
+### Rules
+
+- Every new user request gets a new task branch created from `main`
+- All agent branches are created from the task branch, not from the template branch
+- All pull requests target the task branch `master_{task_name}`, never main or master
+- Iterations, fixes, and improvements related to the same user request all stay within the same task branch
+
+### Creating a Task Branch (Product Owner does this at Step 2)
+
+```bash
+git checkout main
+git checkout -b master_{task_name}
+git push -u origin master_{task_name}
+```
+
+### Creating an Agent Branch
+
+```bash
+git checkout master_{task_name}
+git checkout -b cursor/{agent}-{task_name}-{sessionID}
+```
+
+### Creating a PR
+
+```bash
+gh pr create --base master_{task_name} \
+  --head cursor/{agent}-{task_name}-{sessionID} \
+  --title "[Agent Name] Work description" \
+  --body "## Summary
+[What was accomplished]
+
+## Ready for
+[Next Step Name]"
+```
+
+### If PR Creation Fails
+
+1. `gh auth status` — check authentication
+2. `gh repo set-default OWNER/REPO` — set repository context
+3. `git remote -v` — verify remotes point to your fork
+
+### Merging Before Handover
+
+When the user declines a PR and asks to hand over directly, you MUST merge your agent branch into the task branch first. This ensures the next agent has all previous work. Also, always delete the agent branch after merging to keep the repository clean:
+
+```bash
+git checkout master_{task_name}
+git merge cursor/{agent}-{task_name}-{sessionID}
+git push origin master_{task_name}
+git branch -d cursor/{agent}-{task_name}-{sessionID}
+git push origin --delete cursor/{agent}-{task_name}-{sessionID}
+```
+
+If you skip this step, the next agent will branch from an outdated task branch and miss all your work.
+
+---
+
+## Steps followed by agents for executing the workflow
+
+### Step 1: IT Agent — Verify Tools
+
+ "Act as the IT Agent. **Read your instructions in [`ai-assistants/agents/it-agent.md`](./ai-assistants/agents/it-agent.md) and this main `WORKFLOW GUIDE` carefully**, then begin Step 1: Verify Tools."
+
+**Announce yourself**: Tell the user which agent you are and what you'll do in this step.
+
+**ANIMATION — Run both commands now via terminal tool** (do NOT write as text — actually execute them):
+```bash
+bash scripts/start-animation.sh
+bash scripts/set-agent-state.sh it thinking "Verifying tools..."
+```
+If `start-animation.sh` fails, read `/tmp/agent-animation.log`, fix the issue, and retry until `pgrep -f agent_animation.agent_window` returns a PID.
+
+Read [`ai-assistants/agents/it-agent.md`](./ai-assistants/agents/it-agent.md) in full — understand your role, expertise, and domain knowledge — then execute [Step 1: Verify Tools](./ai-assistants/agents/it-agent.md#step-1-verify-tools) in that file.
+
+Verify that git and gh CLI are installed and authenticated.
+Complete the BEFORE HANDING OFF checklist in that file, then come back here.
+
+**MANDATORY HANDOVER step before moving on:**
+1. Present the tool verification results to the user
+2. ⛔ SINGLE RESPONSE — run this AND the handover question in the same message (do NOT make this a standalone tool call):
+   Run: `bash scripts/set-agent-state.sh it handingoff "Handing off to Product Owner..."`
+3. Ask the user: "Tools are verified. Shall I hand over to Product Owner Agent for Requirements?"
+   ⛔ STOP. Output nothing else and make no further tool calls until the user replies. The animation command above and this question MUST have been in the same response — never run set-agent-state handingoff as a standalone tool call without also outputting the question text. Proceeding without a reply is a CRITICAL WORKFLOW VIOLATION.
+4. Proceed to next step[Step 2](#step-2-product-owner--requirements) when user asks or confirms to do so.
+---
+
+### Step 2: Product Owner — Requirements
+
+ "Act as the Product Owner Agent. **Read your instructions in [`ai-assistants/agents/product-owner-agent.md`](./ai-assistants/agents/product-owner-agent.md) and this main `WORKFLOW GUIDE` carefully**, then begin Step 2: Requirements."
+
+**Announce yourself**: Tell the user which agent you are and what you'll do in this step.
+
+**ANIMATION** — run via terminal tool now (do NOT write as text):
+```bash
+bash scripts/set-agent-state.sh product-owner thinking "Gathering requirements..."
+```
+
+Read [`ai-assistants/agents/product-owner-agent.md`](./ai-assistants/agents/product-owner-agent.md) in full — understand your role, expertise, and domain knowledge — then execute [Step 2: Requirements](./ai-assistants/agents/product-owner-agent.md#step-2-requirements).
+
+Create your agent branch as shown below:
+```bash
+git checkout master_{task_name}
+git checkout -b cursor/product-owner-{task_name}-{sessionID}
+```
+
+Clarify requirements with the user and create a user story. When writing the user story document, update the animation:
+```bash
+bash scripts/set-agent-state.sh product-owner typing "Writing user story..."
+```
+Complete the BEFORE HANDING OFF checklist in that file, then come back here.
+
+**MANDATORY HANDOVER step before moving on** (check [`ai-assistants/memory/user-preferences.md`](./ai-assistants/memory/user-preferences.md) for overrides):
+1. Commit and push your work
+2. ⛔ SINGLE RESPONSE — run this AND the handover question in the same message (do NOT make this a standalone tool call):
+   Run: `bash scripts/set-agent-state.sh product-owner handingoff "Handing off to Cost Analyst..."`
+3. Present the user story to the user for confirmation
+4. Check user preferences for handover behavior. If no preference exists:
+   Ask the user: "Would you like me to create a PR for review, or should I hand over to Cost Analyst Agent for Cost Estimate?"
+   ⛔ STOP. Output nothing else and make no further tool calls until the user replies. The animation command above and this question MUST have been in the same response — never run set-agent-state handingoff as a standalone tool call without also outputting the question text. Proceeding without a reply is a CRITICAL WORKFLOW VIOLATION.
+5. If user wants a PR:
+   - First push your branch: `git push -u origin HEAD`
+   - Then create PR: `gh pr create --base master_{task_name}`
+6. If handing over without PR: merge your branch into the task branch first (see [Merging Before Handover](#merging-before-handover) above).
+7. Go to [Step 3](#step-3-cost-analyst--cost-estimate)  when user asks or confirms to do so.
+
+---
+
+### Step 3: Cost Analyst — Cost Estimate
+
+ "Act as the Cost Analyst Agent. **Read your instructions in [`ai-assistants/agents/cost-analyst-agent.md`](./ai-assistants/agents/cost-analyst-agent.md) and this main `WORKFLOW GUIDE` carefully**, then begin Step 3: Cost Estimate."
+
+**Announce yourself**: Tell the user which agent you are and what you'll do in this step.
+
+**ANIMATION** — run via terminal tool now (do NOT write as text):
+```bash
+bash scripts/set-agent-state.sh cost-analyst reviewing "Estimating costs..."
+```
+
+Read [`ai-assistants/agents/cost-analyst-agent.md`](./ai-assistants/agents/cost-analyst-agent.md) in full — understand your role, expertise, and domain knowledge — then execute [Step 3: Cost Estimate](./ai-assistants/agents/cost-analyst-agent.md#step-3-cost-estimate).
+
+Create your agent branch:
+```bash
+git checkout master_{task_name}
+git checkout -b cursor/cost-analyst-{task_name}-{sessionID}
+```
+
+Estimate total task cost and warn the user if expensive. When writing the cost estimate document, update the animation:
+```bash
+bash scripts/set-agent-state.sh cost-analyst typing "Writing cost estimate..."
+```
+Complete the BEFORE HANDING OFF checklist in that file, then come back here.
+
+**MANDATORY HANDOVER step before moving on** (check [`ai-assistants/memory/user-preferences.md`](./ai-assistants/memory/user-preferences.md) for overrides):
+1. Commit and push your work
+2. ⛔ SINGLE RESPONSE — run this AND the handover question in the same message (do NOT make this a standalone tool call):
+   Run: `bash scripts/set-agent-state.sh cost-analyst handingoff "Handing off to Architect..."`
+3. Report the cost estimate to the user
+4. Ask the user: "The estimated cost is $X. Should I hand over to Architect Agent for Design, create a PR for review, or would you like to adjust the scope?"
+   ⛔ STOP. Output nothing else and make no further tool calls until the user replies. The animation command above and this question MUST have been in the same response — never run set-agent-state handingoff as a standalone tool call without also outputting the question text. Proceeding without a reply is a CRITICAL WORKFLOW VIOLATION.
+4. If the user wants to adjust scope, go back to Step 2
+5. If user wants a PR:
+   - First push your branch: `git push -u origin HEAD`
+   - Then create PR: `gh pr create --base master_{task_name}`
+6. If handing over without PR: merge your branch into the task branch first (see [Merging Before Handover](#merging-before-handover) above). 
+7. Go to [Step 4](#step-4-architect--design) when user asks or confirms to do so.
+
+---
+
+### Step 4: Architect — Design
+
+ "Act as the Architect Agent. **Read your instructions in [`ai-assistants/agents/architect-agent.md`](./ai-assistants/agents/architect-agent.md) and this main `WORKFLOW GUIDE` carefully**, then begin Step 4: Design."
+
+**Announce yourself**: Tell the user which agent you are and what you'll do in this step.
+
+**ANIMATION** — run via terminal tool now (do NOT write as text):
+```bash
+bash scripts/set-agent-state.sh architect thinking "Designing the system..."
+```
+
+Read [`ai-assistants/agents/architect-agent.md`](./ai-assistants/agents/architect-agent.md) in full — understand your role, expertise, and domain knowledge — then execute [Step 4: Design](./ai-assistants/agents/architect-agent.md#step-4-design).
+
+Create your agent branch:
+```bash
+git checkout master_{task_name}
+git checkout -b cursor/architect-{task_name}-{sessionID}
+```
+
+Create the technical design and choose the tech stack. When writing design documents, update the animation:
+```bash
+bash scripts/set-agent-state.sh architect typing "Writing technical specs..."
+```
+Complete the BEFORE HANDING OFF checklist in that file, then come back here.
+
+**MANDATORY HANDOVER step before moving on** (check [`ai-assistants/memory/user-preferences.md`](./ai-assistants/memory/user-preferences.md) for overrides):
+1. Commit and push your work
+2. ⛔ SINGLE RESPONSE — run this AND the handover question in the same message (do NOT make this a standalone tool call):
+   Run: `bash scripts/set-agent-state.sh architect handingoff "Handing off to IT Agent..."`
+3. Check user preferences for handover behavior. If no preference exists:
+   Ask the user: "Would you like me to create a PR for review, or should I hand over to IT Agent for Project Setup?"
+   ⛔ STOP. Output nothing else and make no further tool calls until the user replies. The animation command above and this question MUST have been in the same response — never run set-agent-state handingoff as a standalone tool call without also outputting the question text. Proceeding without a reply is a CRITICAL WORKFLOW VIOLATION.
+3. If user wants a PR:
+   - First push your branch: `git push -u origin HEAD`
+   - Then create PR: `gh pr create --base master_{task_name}`
+4. If handing over without PR: merge your branch into the task branch first (see [Merging Before Handover](#merging-before-handover) above). 
+5. Go to [Step 5](#step-5-it-agent--project-setup)  when user asks or confirms to do so.
+
+---
+
+### Step 5: IT Agent — Project Setup
+
+ "Act as the IT Agent. **Read your instructions in [`ai-assistants/agents/it-agent.md`](./ai-assistants/agents/it-agent.md) and this main `WORKFLOW GUIDE` carefully**, then begin Step 5: Project Setup."
+
+**Announce yourself**: Tell the user which agent you are and what you'll do in this step.
+
+**ANIMATION** — run via terminal tool now (do NOT write as text):
+```bash
+bash scripts/set-agent-state.sh it thinking "Setting up project environment..."
+```
+
+Read [`ai-assistants/agents/it-agent.md`](./ai-assistants/agents/it-agent.md) in full — understand your role, expertise, and domain knowledge — then execute [Step 5: Project Setup](./ai-assistants/agents/it-agent.md#step-5-project-setup).
+
+Create your agent branch:
+```bash
+git checkout master_{task_name}
+git checkout -b cursor/it-{task_name}-{sessionID}
+```
+
+Install project dependencies and create build/test/run scripts. When installing deps and writing scripts, update the animation:
+```bash
+bash scripts/set-agent-state.sh it typing "Installing dependencies and creating scripts..."
+```
+
+MANDATORY: **Always provide ONE SINGLE RUN COMMAND to user to run the task or app created. **NEVER** ask user to do any manual step in addition to your run command for running the task or app created. E.g., If running the app needs to open the browser, then add it in your run script itself, and DO NOT ask user to open the browser, or run any additional command (other than the run command) in any shell or terminal.
+
+Complete the BEFORE HANDING OFF checklist in that file, then come back here.
+
+**MANDATORY HANDOVER step before moving on** (check [`ai-assistants/memory/user-preferences.md`](./ai-assistants/memory/user-preferences.md) for overrides):
+1. Commit and push your work
+2. ⛔ SINGLE RESPONSE — run this AND the handover question in the same message (do NOT make this a standalone tool call):
+   Run: `bash scripts/set-agent-state.sh it handingoff "Handing off to Developer..."`
+3. Check user preferences for handover behavior. If no preference exists:
+   Ask the user: "Would you like me to create a PR for review, or should I hand over to Developer Agent for Implementation?"
+   ⛔ STOP. Output nothing else and make no further tool calls until the user replies. The animation command above and this question MUST have been in the same response — never run set-agent-state handingoff as a standalone tool call without also outputting the question text. Proceeding without a reply is a CRITICAL WORKFLOW VIOLATION.
+4. If user wants a PR:
+   - First push your branch: `git push -u origin HEAD`
+   - Then create PR: `gh pr create --base master_{task_name}`
+5. If handing over without PR: merge your branch into the task branch first (see [Merging Before Handover](#merging-before-handover) above).
+6. Go to [Step 6](#step-6-developer--implementation)  when user asks or confirms to do so.
+
+---
+
+### Step 6: Developer — Implementation
+
+ "Act as the Developer Agent. **Read your instructions in [`ai-assistants/agents/developer-agent.md`](./ai-assistants/agents/developer-agent.md) and this main `WORKFLOW GUIDE` carefully**, then begin Step 6: Implementation."
+
+**Announce yourself**: Tell the user which agent you are and what you'll do in this step.
+
+**ANIMATION** — run via terminal tool now (do NOT write as text):
+```bash
+bash scripts/set-agent-state.sh developer thinking "Planning implementation..."
+```
+
+Read [`ai-assistants/agents/developer-agent.md`](./ai-assistants/agents/developer-agent.md) in full — understand your role, expertise, and domain knowledge — then execute "Step 6: Implementation".
+
+Create your agent branch:
+```bash
+git checkout master_{task_name}
+git checkout -b cursor/developer-{task_name}-{sessionID}
+```
+
+Implement the feature according to Architect's design. When writing code, update the animation:
+```bash
+bash scripts/set-agent-state.sh developer typing "Writing code..."
+```
+Complete the BEFORE HANDING OFF checklist in that file, then come back here.
+
+**MANDATORY HANDOVER step before moving on** (check [`ai-assistants/memory/user-preferences.md`](./ai-assistants/memory/user-preferences.md) for overrides):
+1. Commit and push your work
+2. ⛔ SINGLE RESPONSE — run this AND the handover question in the same message (do NOT make this a standalone tool call):
+   Run: `bash scripts/set-agent-state.sh developer handingoff "Handing off to Tester..."`
+3. Provide the one-line command to run the app:
+   - Mac/Linux: `bash scripts/run.sh`
+   - Windows: `scripts\run.ps1`
+4. Check user preferences for handover behavior. If no preference exists:
+   Ask the user: "Would you like me to create a PR for review, or should I hand over to Tester Agent for Validation?"
+   ⛔ STOP. Output nothing else and make no further tool calls until the user replies. The animation command above and this question MUST have been in the same response — never run set-agent-state handingoff as a standalone tool call without also outputting the question text. Proceeding without a reply is a CRITICAL WORKFLOW VIOLATION.
+5. If user wants a PR:
+   - First push your branch: `git push -u origin HEAD`
+   - Then create PR: `gh pr create --base master_{task_name}`
+6. If handing over without PR: merge your branch into the task branch first (see [Merging Before Handover](#merging-before-handover) above).
+7. Go to [Step 7](#step-7-tester--validation)  when user asks or confirms to do so.
+
+---
+
+### Step 7: Tester — Validation
+
+ "Act as the Tester Agent. **Read your instructions in [`ai-assistants/agents/tester-agent.md`](./ai-assistants/agents/tester-agent.md) and this main `WORKFLOW GUIDE` carefully**, then begin Step 7: Validation."
+
+**Announce yourself**: Tell the user which agent you are and what you'll do in this step.
+
+**ANIMATION** — run via terminal tool now (do NOT write as text):
+```bash
+bash scripts/set-agent-state.sh tester thinking "Planning tests..."
+```
+
+Read [`ai-assistants/agents/tester-agent.md`](./ai-assistants/agents/tester-agent.md) in full — understand your role, expertise, and domain knowledge — then execute [Step 7: Validation](./ai-assistants/agents/tester-agent.md#step-7-validation).
+
+Create your agent branch:
+```bash
+git checkout master_{task_name}
+git checkout -b cursor/tester-{task_name}-{sessionID}
+```
+
+Validate the implementation with tests. When writing and running tests, update the animation:
+```bash
+bash scripts/set-agent-state.sh tester typing "Writing and running tests..."
+```
+Complete the BEFORE HANDING OFF checklist in that file, then come back here.
+
+**MANDATORY HANDOVER step before moving on** (check [`ai-assistants/memory/user-preferences.md`](./ai-assistants/memory/user-preferences.md) for overrides):
+1. Commit and push your work
+2. ⛔ SINGLE RESPONSE — run this AND the handover question in the same message (do NOT make this a standalone tool call):
+   Run: `bash scripts/set-agent-state.sh tester handingoff "Handing off to IT for release..."`
+3. Provide the one-line command to run the tests:
+   - Mac/Linux: `bash scripts/test.sh`
+   - Windows: `scripts\test.ps1`
+4. Check user preferences for handover behavior. If no preference exists:
+   Ask the user: "Would you like me to create a PR for review, or should I hand over to IT Agent for Release?"
+   ⛔ STOP. Output nothing else and make no further tool calls until the user replies. The animation command above and this question MUST have been in the same response — never run set-agent-state handingoff as a standalone tool call without also outputting the question text. Proceeding without a reply is a CRITICAL WORKFLOW VIOLATION.
+5. If user wants a PR:
+   - First push your branch: `git push -u origin HEAD`
+   - Then create PR: `gh pr create --base master_{task_name}`
+6. If handing over without PR: merge your branch into the task branch first (see [Merging Before Handover](#merging-before-handover) above).
+7. Go to [Step 8](#step-8-it-agent--release)  when user asks or confirms to do so.
+
+---
+
+### Step 8: IT Agent — Release
+
+ "Act as the IT Agent. **Read your instructions in [`ai-assistants/agents/it-agent.md`](./ai-assistants/agents/it-agent.md) and this main `WORKFLOW GUIDE` carefully**, then begin Step 8: Release."
+
+**Announce yourself**: Tell the user which agent you are and what you'll do in this step.
+
+**ANIMATION** — run via terminal tool now (do NOT write as text):
+```bash
+bash scripts/set-agent-state.sh it thinking "Building release..."
+```
+
+Read [`ai-assistants/agents/it-agent.md`](./ai-assistants/agents/it-agent.md) in full — understand your role, expertise, and domain knowledge — then execute "Step 8: Release".
+
+Create your agent branch:
+```bash
+git checkout master_{task_name}
+git checkout -b cursor/it-release-{task_name}-{sessionID}
+```
+
+Build release artifacts. When packaging artifacts, update the animation:
+```bash
+bash scripts/set-agent-state.sh it typing "Packaging release artifacts..."
+```
+Complete the BEFORE HANDING OFF checklist in that file, then come back here.
+
+**MANDATORY HANDOVER step before moving on** (check [`ai-assistants/memory/user-preferences.md`](./ai-assistants/memory/user-preferences.md) for overrides):
+1. Commit and push your work
+2. ⛔ SINGLE RESPONSE — run this AND the handover question in the same message (do NOT make this a standalone tool call):
+   Run: `bash scripts/set-agent-state.sh it handingoff "Handing off to Product Owner..."`
+3. Check user preferences for handover behavior. If no preference exists:
+   Ask the user: "Would you like me to create a PR for review, or should I hand over to Product Owner Agent for Acceptance?"
+   ⛔ STOP. Output nothing else and make no further tool calls until the user replies. The animation command above and this question MUST have been in the same response — never run set-agent-state handingoff as a standalone tool call without also outputting the question text. Proceeding without a reply is a CRITICAL WORKFLOW VIOLATION.
+4. If user wants a PR:
+   - First push your branch: `git push -u origin HEAD`
+   - Then create PR: `gh pr create --base master_{task_name}`
+5. If handing over without PR: merge your branch into the task branch first (see [Merging Before Handover](#merging-before-handover) above).
+6. Go to [Step 9](#step-9-product-owner--acceptance)  when user asks or confirms to do so.
+
+---
+
+### Step 9: Product Owner — Acceptance
+ "Act as the Product Owner Agent. **Read your instructions in [`ai-assistants/agents/product-owner-agent.md`](./ai-assistants/agents/product-owner-agent.md) and this main `WORKFLOW GUIDE` carefully**, then begin Step 9: Acceptance."
+
+**Announce yourself**: Tell the user which agent you are and what you'll do in this step.
+
+**ANIMATION** — run via terminal tool now (do NOT write as text):
+```bash
+bash scripts/set-agent-state.sh product-owner reviewing "Final acceptance review..."
+```
+
+Read [`ai-assistants/agents/product-owner-agent.md`](./ai-assistants/agents/product-owner-agent.md) in full — understand your role, expertise, and domain knowledge — then execute [Step 9: Acceptance](./ai-assistants/agents/product-owner-agent.md#step-9-acceptance).
+
+Review the completed work and present to the user.
+
+**MANDATORY:**
+1. Provide the run command and test command to the user
+2. Ask the user to review and accept the work
+3. When the user accepts the work, run:
+   ```bash
+   bash scripts/set-agent-state.sh product-owner celebrating "Task complete!"
+   ```
+
+---
+
+## Prompting Cursor for Agent Roles
+
+- "Act as the IT Agent (follow ai-assistants/agents/it-agent.md) and verify tools are installed"
+- "Act as the Product Owner (follow ai-assistants/agents/product-owner-agent.md) and create a user story for [feature]"
+- "Act as the Cost Analyst (follow ai-assistants/agents/cost-analyst-agent.md) and estimate the cost for this task"
+- "Act as the Architect (follow ai-assistants/agents/architect-agent.md) and design the technical solution"
+- "Act as the Developer (follow ai-assistants/agents/developer-agent.md) and implement [feature]"
+- "Act as the Tester (follow ai-assistants/agents/tester-agent.md) and validate the implementation"
+
+---
+
+## Updating Memory
+
+After completing any step, update memory if any of these happened:
+- **User expressed a preference** → save to [`ai-assistants/memory/user-preferences.md`](./ai-assistants/memory/user-preferences.md)
+- **A project decision was made** (tech stack, architecture, conventions) → save to `ai-assistants/memory/project-decisions.md`
+- **A mistake was made and corrected** → save to `ai-assistants/memory/mistakes-and-fixes.md` under the appropriate agent section
